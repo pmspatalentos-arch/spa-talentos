@@ -5,9 +5,9 @@ import { supabase } from "@/lib/supabase";
 
 type Vaga = {
   id: string; titulo: string; descricao: string; setor: string;
-  bairro: string; quantidade: number; criado_em: string;
+  bairro: string; quantidade: number; contratacoes: number; criado_em: string;
   escolaridade_minima: string; habilidades_desejadas: string;
-  area_experiencia: string; disponibilidade_exigida: string;
+  area_experiencia: string; disponibilidade_exigida: string; ativa: boolean;
 };
 
 type Curso = {
@@ -35,6 +35,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   aprovada:     { label: "Aprovada",     color: "bg-green-50 text-green-600" },
   nao_aprovada: { label: "Não aprovada", color: "bg-red-50 text-red-600" },
   comparecer:   { label: "Comparecer",   color: "bg-yellow-50 text-yellow-700" },
+  contratado:   { label: "Contratado",   color: "bg-purple-50 text-purple-700" },
 };
 
 const calcularScore = (candidato: Candidato, vaga: Vaga): number => {
@@ -129,6 +130,30 @@ export default function Admin() {
     setAba("por_vaga");
   };
 
+  const registrarContratacao = async (candidatura: Candidatura) => {
+    setSalvando(true);
+
+    // Atualiza status da candidatura para contratado
+    await supabase.from("candidaturas").update({ status: "contratado" }).eq("id", candidatura.id);
+
+    // Busca vaga atual
+    const { data: vaga } = await supabase.from("vagas_spa").select("quantidade, contratacoes").eq("id", candidatura.vaga_id).single();
+
+    if (vaga) {
+      const novasContratacoes = (vaga.contratacoes || 0) + 1;
+      const vagasRestantes = vaga.quantidade - novasContratacoes;
+
+      // Se não tem mais vagas, desativa automaticamente
+      await supabase.from("vagas_spa").update({
+        contratacoes: novasContratacoes,
+        ativa: vagasRestantes > 0,
+      }).eq("id", candidatura.vaga_id);
+    }
+
+    await carregarDados();
+    setSalvando(false);
+  };
+
   const salvarStatus = async () => {
     if (!modalStatus) return;
     setSalvando(true);
@@ -163,7 +188,7 @@ export default function Admin() {
   const salvarVaga = async () => {
     setSalvando(true);
     const { error } = await supabase.from("vagas_spa").insert([{
-      ...novaVaga, ativa: true, criado_em: new Date().toISOString(),
+      ...novaVaga, ativa: true, contratacoes: 0, criado_em: new Date().toISOString(),
     }]);
     if (!error) {
       setModalVaga(false);
@@ -205,7 +230,9 @@ export default function Admin() {
       <header className="bg-[#08213E] px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-yellow-400 flex items-center justify-center text-[#08213E] font-bold text-sm">S</div>
+            <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center overflow-hidden">
+              <img src="/brasao.png" alt="Brasão" className="w-6 h-6 object-contain" />
+            </div>
             <div>
               <span className="text-white font-bold text-sm">SPA Talentos</span>
               <span className="ml-2 text-xs bg-yellow-400/20 text-yellow-400 px-2 py-0.5 rounded-full">Secretaria</span>
@@ -221,7 +248,7 @@ export default function Admin() {
           <div className="grid grid-cols-4 gap-4">
             {[
               { label: "Candidatos", valor: candidatos.length, icon: "👥" },
-              { label: "Vagas publicadas", valor: vagas.length, icon: "🎯" },
+              { label: "Vagas publicadas", valor: vagas.filter(v => v.ativa).length, icon: "🎯" },
               { label: "Cursos disponíveis", valor: cursos.length, icon: "📚" },
               { label: "Candidaturas", valor: candidaturas.length, icon: "📋" },
             ].map((kpi) => (
@@ -266,17 +293,21 @@ export default function Admin() {
                 <div className="grid gap-4">
                   {vagas.map((v) => {
                     const total = candidaturas.filter(c => c.vaga_id === v.id).length;
+                    const vagasRestantes = v.quantidade - (v.contratacoes || 0);
                     return (
-                      <div key={v.id} className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
+                      <div key={v.id} className={`bg-white rounded-2xl p-6 border shadow-sm ${!v.ativa ? "opacity-60 border-gray-200" : "border-gray-100"}`}>
                         <div className="flex items-start justify-between">
                           <div>
-                            <h3 className="font-bold text-gray-800">{v.titulo}</h3>
+                            <div className="flex items-center gap-2 mb-2">
+                              <h3 className="font-bold text-gray-800">{v.titulo}</h3>
+                              {!v.ativa && <span className="px-2 py-0.5 bg-red-50 text-red-600 text-xs rounded-full font-semibold">Encerrada</span>}
+                            </div>
                             <p className="text-gray-500 text-sm mt-1">{v.descricao}</p>
                             <div className="flex gap-2 mt-3 flex-wrap">
                               {v.setor && <span className="px-3 py-1 bg-blue-50 text-blue-600 text-xs rounded-full">{v.setor}</span>}
                               <span className="px-3 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">{v.bairro || "São Pedro da Aldeia"}</span>
-                              <span className="px-3 py-1 bg-green-50 text-green-600 text-xs rounded-full">{v.quantidade} vaga(s)</span>
-                              {v.escolaridade_minima && <span className="px-3 py-1 bg-purple-50 text-purple-600 text-xs rounded-full">📚 {v.escolaridade_minima.replace(/_/g, " ")}</span>}
+                              <span className="px-3 py-1 bg-green-50 text-green-600 text-xs rounded-full">{vagasRestantes} vaga(s) restante(s)</span>
+                              {v.contratacoes > 0 && <span className="px-3 py-1 bg-purple-50 text-purple-600 text-xs rounded-full">✓ {v.contratacoes} contratado(s)</span>}
                             </div>
                           </div>
                           <button onClick={() => carregarCandidaturasPorVaga(v)} className="ml-4 px-4 py-2 bg-[#08213E] text-white text-xs font-semibold rounded-xl hover:bg-[#0a2d56] transition-all flex-shrink-0">
@@ -332,12 +363,23 @@ export default function Admin() {
                                 </button>
                               </a>
                             )}
-                            <button
-                              onClick={() => { setModalStatus(c); setEditStatus({ status: c.status || "enviada", observacao: c.observacao || "", local_entrevista: c.local_entrevista || "", data_entrevista: c.data_entrevista || "" }); }}
-                              className="px-3 py-1.5 bg-yellow-400 text-[#08213E] text-xs font-bold rounded-lg hover:bg-yellow-300 transition-all"
-                            >
-                              Atualizar
-                            </button>
+                            {(c.status === "aprovada" || c.status === "comparecer") && c.status !== "contratado" && (
+                              <button
+                                onClick={() => registrarContratacao(c)}
+                                disabled={salvando}
+                                className="px-3 py-1.5 bg-purple-500 text-white text-xs font-bold rounded-lg hover:bg-purple-600 transition-all disabled:opacity-40"
+                              >
+                                ✓ Contratado
+                              </button>
+                            )}
+                            {c.status !== "contratado" && (
+                              <button
+                                onClick={() => { setModalStatus(c); setEditStatus({ status: c.status || "enviada", observacao: c.observacao || "", local_entrevista: c.local_entrevista || "", data_entrevista: c.data_entrevista || "" }); }}
+                                className="px-3 py-1.5 bg-yellow-400 text-[#08213E] text-xs font-bold rounded-lg hover:bg-yellow-300 transition-all"
+                              >
+                                Atualizar
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -424,7 +466,7 @@ export default function Admin() {
               </div>
               <div><label className="text-sm font-medium text-gray-700 mb-1 block">Bairro</label><input type="text" value={novaVaga.bairro} onChange={(e) => setNovaVaga({...novaVaga, bairro: e.target.value})} placeholder="Ex: Centro..." className={inputClass} /></div>
               <div className="border-t border-gray-100 pt-4">
-                <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Requisitos para o score de compatibilidade</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Requisitos para o score</p>
                 <div className="flex flex-col gap-3">
                   <div>
                     <label className="text-sm font-medium text-gray-700 mb-1 block">Escolaridade mínima</label>
@@ -439,8 +481,8 @@ export default function Admin() {
                       <option value="superior_completo">Superior completo</option>
                     </select>
                   </div>
-                  <div><label className="text-sm font-medium text-gray-700 mb-1 block">Habilidades desejadas</label><input type="text" value={novaVaga.habilidades_desejadas} onChange={(e) => setNovaVaga({...novaVaga, habilidades_desejadas: e.target.value})} placeholder="Ex: Atendimento, Pacote Office, Vendas" className={inputClass} /></div>
-                  <div><label className="text-sm font-medium text-gray-700 mb-1 block">Área de experiência</label><input type="text" value={novaVaga.area_experiencia} onChange={(e) => setNovaVaga({...novaVaga, area_experiencia: e.target.value})} placeholder="Ex: comércio, logística, saúde" className={inputClass} /></div>
+                  <div><label className="text-sm font-medium text-gray-700 mb-1 block">Habilidades desejadas</label><input type="text" value={novaVaga.habilidades_desejadas} onChange={(e) => setNovaVaga({...novaVaga, habilidades_desejadas: e.target.value})} placeholder="Ex: Atendimento, Vendas..." className={inputClass} /></div>
+                  <div><label className="text-sm font-medium text-gray-700 mb-1 block">Área de experiência</label><input type="text" value={novaVaga.area_experiencia} onChange={(e) => setNovaVaga({...novaVaga, area_experiencia: e.target.value})} placeholder="Ex: comércio, saúde..." className={inputClass} /></div>
                 </div>
               </div>
             </div>
@@ -483,7 +525,7 @@ export default function Admin() {
             <p className="text-gray-500 text-sm mb-6">{modalStatus.candidato_nome}</p>
             <div className="flex flex-col gap-4">
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-1 block">Status da candidatura</label>
+                <label className="text-sm font-medium text-gray-700 mb-1 block">Status</label>
                 <select value={editStatus.status} onChange={(e) => setEditStatus({...editStatus, status: e.target.value})} className={inputClass}>
                   <option value="enviada">📤 Enviada</option>
                   <option value="em_analise">🔍 Em análise</option>
@@ -494,15 +536,15 @@ export default function Admin() {
               </div>
               {editStatus.status === "comparecer" && (
                 <>
-                  <div><label className="text-sm font-medium text-gray-700 mb-1 block">Local da entrevista</label><input type="text" value={editStatus.local_entrevista} onChange={(e) => setEditStatus({...editStatus, local_entrevista: e.target.value})} placeholder="Ex: Secretaria de Desenvolvimento, Sala 2" className={inputClass} /></div>
+                  <div><label className="text-sm font-medium text-gray-700 mb-1 block">Local</label><input type="text" value={editStatus.local_entrevista} onChange={(e) => setEditStatus({...editStatus, local_entrevista: e.target.value})} placeholder="Ex: Secretaria, Sala 2" className={inputClass} /></div>
                   <div><label className="text-sm font-medium text-gray-700 mb-1 block">Data e hora</label><input type="datetime-local" value={editStatus.data_entrevista} onChange={(e) => setEditStatus({...editStatus, data_entrevista: e.target.value})} className={inputClass} /></div>
                 </>
               )}
-              <div><label className="text-sm font-medium text-gray-700 mb-1 block">Observação (opcional)</label><textarea value={editStatus.observacao} onChange={(e) => setEditStatus({...editStatus, observacao: e.target.value})} placeholder="Alguma observação..." rows={2} className={`${inputClass} resize-none`} /></div>
+              <div><label className="text-sm font-medium text-gray-700 mb-1 block">Observação</label><textarea value={editStatus.observacao} onChange={(e) => setEditStatus({...editStatus, observacao: e.target.value})} rows={2} className={`${inputClass} resize-none`} /></div>
             </div>
             <div className="flex gap-3 mt-6">
               <button onClick={() => setModalStatus(null)} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm">Cancelar</button>
-              <button onClick={salvarStatus} disabled={salvando} className="flex-[2] py-3 rounded-xl bg-yellow-400 text-[#08213E] font-bold text-sm disabled:opacity-40">{salvando ? "Salvando..." : "Salvar status"}</button>
+              <button onClick={salvarStatus} disabled={salvando} className="flex-[2] py-3 rounded-xl bg-yellow-400 text-[#08213E] font-bold text-sm disabled:opacity-40">{salvando ? "Salvando..." : "Salvar"}</button>
             </div>
           </div>
         </div>
